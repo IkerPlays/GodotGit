@@ -1,107 +1,109 @@
-# Sincronización con GitHub en tiempo real (integrada en el editor)
+# Real-time GitHub sync (built into the editor)
 
-Esta carpeta es código nativo (C++) del editor: no hay que instalar ningún plugin.
-Cualquier proyecto abierto con este motor puede conectarse a un repositorio de GitHub.
+Native editor code (C++): there is no plugin to install. Any project opened with this engine can be
+connected to a GitHub repository.
 
-- **Creas, guardas, renombras o borras** un archivo → se sube solo a GitHub (un commit por tanda de cambios).
-- **Un compañero sube algo** → aparece en tu proyecto en pocos segundos; las escenas abiertas se recargan solas.
-- **Varios colaboradores a la vez** sobre el mismo repo: los cambios se mezclan archivo a archivo.
-- Panel **GitHub** (abajo en el editor): estado, actividad del equipo, registro e invitaciones.
-- Botón de estado en la barra superior del editor (`○` sin conectar, `◐` sincronizando, `●` al día, `▲` error).
+- **Create, save, rename or delete** a file: it is uploaded to GitHub automatically (one commit per batch of changes).
+- **A teammate pushes something**: it shows up in your project within a few seconds; open scenes reload by themselves.
+- **Several collaborators at once** on the same repository: changes are merged file by file.
+- **GitHub** bottom panel: status, team activity, log and invitations.
+- Status button in the editor toolbar (`○` not connected, `◐` syncing, `●` up to date, `▲` error).
 
-## Uso
+## Usage
 
-### Iniciar sesión (cuenta normal de GitHub, sin pegar tokens)
-Panel **GitHub** → **Sign in with GitHub**:
+### Sign in (regular GitHub account, no tokens to paste)
 
-1. Aparece un código (p. ej. `ABCD-1234`) y se abre `github.com/login/device`.
-2. Escribes el código en GitHub e inicias sesión / autorizas con tu cuenta de siempre (2FA incluido).
-3. El editor queda conectado: ves tus repositorios en un desplegable y eliges uno (o creas uno nuevo).
+**GitHub** panel, then **Sign in with GitHub**:
 
-Es el *device flow* de OAuth de GitHub: no se pega ningún token y no hay servidor intermedio.
-La sesión se guarda en tu equipo; **Sign out** la borra.
+1. A code (for example `ABCD-1234`) is shown and `github.com/login/device` is opened.
+2. Enter the code on GitHub and sign in / authorize with your usual account (2FA included).
+3. The editor is connected: your repositories show up in a drop-down; pick one (or create a new one).
 
-### Al crear un proyecto
-En **Crear nuevo proyecto** hay un campo **GitHub Repository (optional)**:
+This is GitHub's OAuth *device flow*: no token is pasted and there is no intermediate server.
+The session is stored on your computer; **Sign out** deletes it.
 
-1. Escribe `usuario/repositorio` o pega la URL.
-2. Deja marcado **Create it if missing (private)** si quieres que se cree (privado) cuando no exista.
-3. Al abrir el proyecto, el editor abre el panel GitHub (si aún no has iniciado sesión), te conecta y sube el proyecto.
+### When creating a project
 
-### En un proyecto ya abierto
-Panel **GitHub**: elige un repo de tu lista o escribe `usuario/repo` (o URL) y rama opcional → **Connect**.
-Si el repo ya tiene contenido, se descarga. **Create and connect** crea un repo nuevo en tu cuenta.
+**Create New Project** has a **GitHub Repository (optional)** field:
 
-### Colaborar
-**Invite** (hace falta ser admin del repo) o invita desde GitHub. Tu compañero inicia sesión con **su** cuenta,
-se conecta al mismo repo y recibe todo.
+1. Type `user/repository` or paste the URL.
+2. Leave **Create it if missing (private)** checked to create the repository (private) when it does not exist.
+3. When the project opens, the editor shows the GitHub panel (if you are not signed in yet), connects and uploads the project.
 
-## Configuración del inicio de sesión (una vez por build del motor)
+### In an already open project
 
-El inicio de sesión necesita el **Client ID** de una *OAuth App* de GitHub (es público, no es un secreto):
+**GitHub** panel: pick one of your repositories or type `user/repo` (or a URL) with an optional branch, then **Connect**.
+If the repository already has content it is downloaded. **Create and connect** creates a new repository in your account.
 
-1. GitHub → Settings → Developer settings → OAuth Apps → **New OAuth App**
-   (<https://github.com/settings/developers>). Nombre y URL de inicio: lo que quieras.
-   La *callback URL* no se usa pero es obligatoria (pon `http://localhost`).
-2. En la app marca **Enable Device Flow**.
-3. Copia el **Client ID** y ponlo en `DEFAULT_CLIENT_ID` de `github_sync.cpp` (ya puesto: `Ov23li6SzlWZociZ8Bvk`)
-   (así todo el que use tu motor inicia sesión sin hacer nada más), o bien en la variable de entorno
-   `GODOT_GITHUB_CLIENT_ID`, o en el archivo `<carpeta de config del editor>/github_client_id`.
+### Collaborating
 
-Permiso que se pide a cada usuario: `repo` (leer/escribir sus repos).
+Use **Invite** (you must be an admin of the repository) or invite people from GitHub. Your teammate signs in with **their own**
+account, connects to the same repository and receives everything.
 
-## Alternativa: token personal
+## Sign-in setup (once per engine build)
 
-Panel **GitHub** → *Use a personal access token instead*, o la variable de entorno `GITHUB_TOKEN`.
-Clásico con permiso `repo`, o fine-grained con **Contents: Read & write**.
+Sign in needs the **Client ID** of a GitHub *OAuth App* (it is public, not a secret):
 
-- La sesión/token se guarda en `<carpeta de config del editor>/github_token` con permisos `600`.
-  Nunca va dentro del proyecto ni a GitHub.
-- `GODOT_GITHUB_API_URL` / `GODOT_GITHUB_LOGIN_URL` cambian los hosts (GitHub Enterprise: `https://HOST/api/v3`
-  y `https://HOST`).
+1. GitHub, Settings, Developer settings, OAuth Apps, **New OAuth App** (<https://github.com/settings/developers>).
+   Any name and home page. The callback URL is unused but required (use `http://localhost`).
+2. Tick **Enable Device Flow** in the app.
+3. Put the **Client ID** in `DEFAULT_CLIENT_ID` in `github_sync.cpp` (already set for this repository), or provide it
+   with the `GODOT_GITHUB_CLIENT_ID` environment variable, or in the file `<editor config folder>/github_client_id`.
 
-## Cómo funciona
+Permission requested from each user: `repo` (read/write their repositories).
 
-Cada pasada compara tres estados por archivo (hash de blob de git): **base** (última sincronización),
-**local** (disco) y **remoto** (rama de GitHub).
+## Alternative: personal access token
 
-| local vs base | remoto vs base | acción |
+**GitHub** panel, then *Use a personal access token instead*, or the `GITHUB_TOKEN` environment variable.
+A classic token with the `repo` scope, or a fine-grained one with **Contents: Read & write**.
+
+- The session/token is stored in `<editor config folder>/github_token` with `600` permissions.
+  It never goes into the project or to GitHub.
+- `GODOT_GITHUB_API_URL` / `GODOT_GITHUB_LOGIN_URL` change the hosts (GitHub Enterprise: `https://HOST/api/v3`
+  and `https://HOST`).
+
+## How it works
+
+Every pass compares three states per file (git blob hash): **base** (last synchronization),
+**local** (disk) and **remote** (the GitHub branch).
+
+| local vs base | remote vs base | action |
 |---|---|---|
-| igual | cambió | se descarga / borra en local |
-| cambió | igual | se sube / borra en GitHub |
-| cambió | cambió | **conflicto** |
+| same | changed | download / delete locally |
+| changed | same | upload / delete on GitHub |
+| changed | changed | **conflict** |
 
-- **Subida**: un solo commit atómico con la API Git Data (blobs → árbol → commit → mover la rama sin forzar).
-  Si alguien se adelantó (422), se vuelve a sincronizar y se reintenta.
-- **Tiempo real**: se consulta la rama cada 4 s (configurable, 2–60 s) con `ETag`; las respuestas
-  `304 Not Modified` no gastan cuota de la API. Los cambios locales se detectan al guardar (antirrebote de
-  1,5 s) y revisando el disco en cada ciclo (con caché por fecha de modificación).
-- **Conflictos** (mismo archivo cambiado en ambos lados): gana tu versión y la remota se guarda en
-  `.godotgit/conflicts/<fecha>/remote/…` (además queda en el historial de git). En la **primera conexión** gana
-  la del repo y la tuya queda en `…/local/…`, para no pisar un repo existente.
-- **Escenas abiertas**: si cambian en GitHub se recargan; si tienes cambios sin guardar en esa escena no se
-  tocan y el registro avisa.
-- **Reintentos**: sin red o con error, la comprobación se espacia con espera exponencial (hasta 60 s).
-- **Ignorados**: `.godot/`, `.git/`, `.godotgit/`, temporales y lo que diga el `.gitignore`
-  (patrones simples: `*.ext`, `carpeta/`, `/ruta`; sin negaciones `!`). Si no hay `.gitignore` se crea uno.
-- **Estado local**: `res://.godotgit/` (`config.cfg` con el repo, `state.json`, `conflicts/`), con `.gdignore`
-  y añadido al `.gitignore`. Para desconectar: botón **Disconnect**.
+- **Upload**: a single atomic commit through the Git Data API (blobs, tree, commit, then move the branch without forcing).
+  If somebody pushed first (422) the cycle is retried.
+- **Real time**: the branch is polled every 4 s (configurable, 2 to 60 s) with an `ETag`; `304 Not Modified` answers
+  do not count against the API rate limit. Local changes are detected on save (1.5 s debounce) and by checking the
+  disk on every cycle (with a modification-time cache).
+- **Conflicts** (same file changed on both sides): your version wins and the remote one is kept in
+  `.godotgit/conflicts/<date>/remote/...` (it also stays in the git history). On the **first connection** the
+  repository version wins and yours is kept in `.../local/...`, so an existing repository is never overwritten.
+- **Open scenes**: if they change on GitHub they are reloaded; if you have unsaved changes in that scene it is left
+  alone and the log warns you.
+- **Retries**: without network, or on errors, checks back off exponentially (up to 60 s).
+- **Ignored**: `.godot/`, `.git/`, `.godotgit/`, temporary files and whatever your `.gitignore` says
+  (simple patterns: `*.ext`, `folder/`, `/path`; no `!` negations). A default `.gitignore` is created if missing.
+- **Local state**: `res://.godotgit/` (`config.cfg` with the repository, `state.json`, `conflicts/`), with a `.gdignore`
+  and added to `.gitignore`. Use **Disconnect** to stop syncing.
 
-## Límites conocidos
+## Known limits
 
-- Se sincroniza lo que está **guardado en disco** (Ctrl+S).
-- No hay fusión línea a línea: dos personas editando el mismo `.tscn`/`.gd` a la vez se resuelve por conflicto
-  de archivo. Para escenas, mejor repartir quién toca qué.
-- Archivos de más de 50 MB no se sincronizan (usa Git LFS o exclúyelos).
-- No se conservan permisos de ejecución ni symlinks.
-- La interfaz está en inglés (cadenas `TTR`, listas para traducir en los `.po`).
+- Only what is **saved to disk** is synchronized (Ctrl+S).
+- There is no line-level merge: two people editing the same `.tscn`/`.gd` at once is resolved as a file conflict.
+  For scenes, it is better to agree on who touches what.
+- Files larger than 50 MB are not synchronized (use Git LFS or exclude them).
+- Executable permissions and symlinks are not preserved.
+- The UI is in English (`TTR` strings, ready to be translated in the `.po` files).
 
-## Archivos
+## Files
 
-| archivo | contenido |
+| file | contents |
 |---|---|
-| `github_client.*` | cliente asíncrono mínimo de la API REST de GitHub y del device flow de OAuth |
-| `github_sync.*` | motor de sincronización (3 vías, push/pull, sondeo con ETag, ignorados, persistencia) |
-| `github_sync_dock.*` | panel «GitHub» del editor |
-| `github_sync_plugin.*` | `EditorPlugin` integrado: panel inferior + botón de estado |
-| `../project_manager/project_dialog.*` | campo de repo/token al crear un proyecto |
+| `github_client.*` | minimal asynchronous client for the GitHub REST API and the OAuth device flow |
+| `github_sync.*` | sync engine (three-way, push/pull, ETag polling, ignore rules, persistence) |
+| `github_sync_dock.*` | the "GitHub" editor panel |
+| `github_sync_plugin.*` | built-in `EditorPlugin`: bottom panel and status button |
+| `../project_manager/project_dialog.*` | repository field when creating a project |
