@@ -100,7 +100,7 @@ private:
 
 	VBoxContainer *github_container = nullptr;
 	LineEdit *github_repo = nullptr;
-	LineEdit *github_token = nullptr;
+	Label *github_hint = nullptr;
 	CheckBox *github_create = nullptr;
 
 	CheckBox *edit_check_box = nullptr;

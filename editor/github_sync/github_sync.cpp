@@ -54,6 +54,11 @@ static const int64_t MAX_FILE_BYTES = 50 * 1024 * 1024;
 static const int PARALLEL_REQUESTS = 6;
 static const int MAX_ATTEMPTS = 4;
 static const double DEBOUNCE_SECONDS = 1.5;
+
+// Public identifier of the GitHub OAuth App used for "Sign in with GitHub" (device flow; it is not a secret).
+// Register one at https://github.com/settings/developers (enable "Device Flow") and put its Client ID here,
+// or provide it at runtime with the GODOT_GITHUB_CLIENT_ID environment variable.
+static const char *DEFAULT_CLIENT_ID = "";
 static const char *DEFAULT_GITIGNORE = "# Godot 4+\n.godot/\n/android/\n\n# Local GitHub sync state\n.godotgit/\n\n# Temporary files\n*.tmp\n";
 
 static const char *ALWAYS_IGNORED_DIRS[] = { ".godot", ".git", ".godotgit", ".import", ".mono", ".vs", ".idea", nullptr };
@@ -133,6 +138,21 @@ String GitHubSync::git_blob_sha(const uint8_t *p_data, size_t p_len) {
 
 String GitHubSync::get_token_path() {
 	return EditorPaths::get_singleton()->get_config_dir().path_join("github_token");
+}
+
+String GitHubSync::get_client_id() {
+	String id = OS::get_singleton()->get_environment("GODOT_GITHUB_CLIENT_ID").strip_edges();
+	if (!id.is_empty()) {
+		return id;
+	}
+	const String path = EditorPaths::get_singleton()->get_config_dir().path_join("github_client_id");
+	if (FileAccess::exists(path)) {
+		id = FileAccess::get_file_as_string(path).strip_edges();
+		if (!id.is_empty()) {
+			return id;
+		}
+	}
+	return String(DEFAULT_CLIENT_ID);
 }
 
 String GitHubSync::load_token() {
@@ -350,6 +370,11 @@ GitHubSync::GitHubSync() {
 	debounce_timer->set_wait_time(DEBOUNCE_SECONDS);
 	debounce_timer->connect("timeout", callable_mp(this, &GitHubSync::_on_debounce));
 	add_child(debounce_timer);
+
+	login_timer = memnew(Timer);
+	login_timer->set_one_shot(true);
+	login_timer->connect("timeout", callable_mp(this, &GitHubSync::_login_poll));
+	add_child(login_timer);
 }
 
 GitHubSync::~GitHubSync() {
@@ -363,6 +388,9 @@ void GitHubSync::_bind_methods() {
 	ADD_SIGNAL(MethodInfo("log_message", PropertyInfo(Variant::STRING, "text"), PropertyInfo(Variant::INT, "level")));
 	ADD_SIGNAL(MethodInfo("activity_updated", PropertyInfo(Variant::ARRAY, "entries")));
 	ADD_SIGNAL(MethodInfo("connection_changed", PropertyInfo(Variant::BOOL, "connected")));
+	ADD_SIGNAL(MethodInfo("device_code", PropertyInfo(Variant::STRING, "user_code"), PropertyInfo(Variant::STRING, "verification_uri")));
+	ADD_SIGNAL(MethodInfo("account_changed", PropertyInfo(Variant::STRING, "login")));
+	ADD_SIGNAL(MethodInfo("login_required"));
 }
 
 void GitHubSync::_notification(int p_what) {
@@ -381,6 +409,7 @@ void GitHubSync::start() {
 	} else {
 		_emit_status(TTR("Not connected"), STATUS_DISCONNECTED);
 		emit_signal("connection_changed", false);
+		refresh_account();
 	}
 }
 
@@ -397,20 +426,24 @@ void GitHubSync::shutdown() {
 void GitHubSync::_verify_and_resume(const String &p_token) {
 	client->set_token(p_token);
 	if (p_token.is_empty()) {
-		_emit_status(TTR("GitHub token missing"), STATUS_ERROR);
+		_emit_status(TTR("Sign in to GitHub to sync this project"), STATUS_ERROR);
 		emit_signal("connection_changed", false);
+		emit_signal("login_required");
 		return;
 	}
 	client->get_user([this](const Dictionary &p_me) {
 		const bool ok = _res_ok(p_me);
 		if (!ok && _res_code(p_me) != 0) {
 			_log(TTR("Couldn't verify the token: ") + _res_error(p_me), LOG_ERROR);
-			_emit_status(TTR("Invalid token"), STATUS_ERROR);
+			_emit_status(TTR("GitHub session expired: sign in again"), STATUS_ERROR);
 			emit_signal("connection_changed", false);
+			emit_signal("login_required");
 			return;
 		}
 		if (ok) {
 			user_login = _res_data(p_me).get("login", "");
+			account_login = user_login;
+			emit_signal("account_changed", account_login);
 		}
 		_load_state();
 		connected = true;
@@ -432,16 +465,16 @@ void GitHubSync::connect_repo(const String &p_owner, const String &p_repo, const
 		p_cb(TTR("A synchronization is in progress."));
 		return;
 	}
-	const String token = p_token.strip_edges();
+	const String token = p_token.strip_edges().is_empty() ? load_token() : p_token.strip_edges();
 	if (token.is_empty()) {
-		p_cb(TTR("Paste your GitHub token first."));
+		p_cb(TTR("Sign in with GitHub first."));
 		return;
 	}
 	client->set_token(token);
 
 	client->get_user([=](const Dictionary &p_me) {
 		if (!_res_ok(p_me)) {
-			p_cb(TTR("GitHub rejected the token: ") + _res_error(p_me));
+			p_cb(TTR("GitHub rejected the credentials: ") + _res_error(p_me));
 			return;
 		}
 		user_login = _res_data(p_me).get("login", "");
@@ -472,7 +505,9 @@ void GitHubSync::connect_repo(const String &p_owner, const String &p_repo, const
 					p_cb(p_error);
 					return;
 				}
-				save_token(token);
+				if (!p_token.strip_edges().is_empty()) {
+					save_token(token);
+				}
 				repo_owner = p_owner;
 				repo = p_repo;
 				branch = wanted;
@@ -494,9 +529,9 @@ void GitHubSync::connect_repo(const String &p_owner, const String &p_repo, const
 }
 
 void GitHubSync::create_and_connect(const String &p_repo_name, bool p_private, const String &p_token, const ErrorCallback &p_cb) {
-	const String token = p_token.strip_edges();
+	const String token = p_token.strip_edges().is_empty() ? load_token() : p_token.strip_edges();
 	if (token.is_empty()) {
-		p_cb(TTR("Paste your GitHub token first."));
+		p_cb(TTR("Sign in with GitHub first."));
 		return;
 	}
 	client->set_token(token);
@@ -505,7 +540,7 @@ void GitHubSync::create_and_connect(const String &p_repo_name, bool p_private, c
 
 	client->get_user([=](const Dictionary &p_me) {
 		if (!_res_ok(p_me)) {
-			p_cb(TTR("GitHub rejected the token: ") + _res_error(p_me));
+			p_cb(TTR("GitHub rejected the credentials: ") + _res_error(p_me));
 			return;
 		}
 		user_login = _res_data(p_me).get("login", "");
@@ -525,6 +560,178 @@ void GitHubSync::create_and_connect(const String &p_repo_name, bool p_private, c
 				connect_repo(new_owner, name, "", token, p_cb);
 			});
 		});
+	});
+}
+
+// ======================================================== Account sign-in
+
+void GitHubSync::begin_device_login(const ErrorCallback &p_cb) {
+	if (login_active) {
+		p_cb(TTR("A sign-in is already in progress."));
+		return;
+	}
+	const String client_id = get_client_id();
+	if (client_id.is_empty()) {
+		p_cb(TTR("This editor has no GitHub OAuth Client ID configured. Set GODOT_GITHUB_CLIENT_ID (see editor/github_sync/README.md) or use a personal access token."));
+		return;
+	}
+	login_active = true;
+	login_cb = p_cb;
+	login_client_id = client_id;
+
+	client->request_device_code(client_id, [this](const Dictionary &p_res) {
+		if (!login_active) {
+			return; // Cancelled meanwhile.
+		}
+		const Dictionary answer = _res_data(p_res);
+		if (!_res_ok(p_res) || answer.has("error")) {
+			String error = answer.get("error_description", _res_error(p_res));
+			if (_res_code(p_res) == 404) {
+				error = TTR("GitHub doesn't recognize this OAuth Client ID (is \"Device Flow\" enabled on the OAuth App?).");
+			}
+			_login_finish(error);
+			return;
+		}
+		login_device_code = answer.get("device_code", "");
+		login_interval = MAX(1.0, (double)answer.get("interval", 5));
+		login_expires_at = OS::get_singleton()->get_unix_time() + (double)answer.get("expires_in", 900);
+		const String user_code = answer.get("user_code", "");
+		const String uri = answer.get("verification_uri", "https://github.com/login/device");
+		emit_signal("device_code", user_code, uri);
+		_log(vformat(TTR("Open %s and enter the code %s to sign in."), uri, user_code), LOG_INFO);
+		OS::get_singleton()->shell_open(uri);
+		login_timer->start(login_interval);
+	});
+}
+
+void GitHubSync::cancel_device_login() {
+	if (!login_active) {
+		return;
+	}
+	_login_finish(TTR("Sign-in cancelled."));
+}
+
+void GitHubSync::_login_finish(const String &p_error) {
+	login_active = false;
+	login_timer->stop();
+	const ErrorCallback cb = login_cb;
+	login_cb = nullptr;
+	if (cb) {
+		cb(p_error);
+	}
+}
+
+void GitHubSync::_login_poll() {
+	if (!login_active) {
+		return;
+	}
+	if (OS::get_singleton()->get_unix_time() > login_expires_at) {
+		_login_finish(TTR("The sign-in code expired. Try again."));
+		return;
+	}
+	client->poll_device_token(login_client_id, login_device_code, [this](const Dictionary &p_res) {
+		if (!login_active) {
+			return;
+		}
+		if (!_res_ok(p_res) && _res_code(p_res) == 0) {
+			login_timer->start(login_interval); // Network hiccup: keep waiting.
+			return;
+		}
+		const Dictionary answer = _res_data(p_res);
+		const String error = answer.get("error", "");
+		if (error == "authorization_pending") {
+			login_timer->start(login_interval);
+			return;
+		}
+		if (error == "slow_down") {
+			login_interval = MAX(login_interval + 5.0, (double)answer.get("interval", 0));
+			login_timer->start(login_interval);
+			return;
+		}
+		if (error == "expired_token") {
+			_login_finish(TTR("The sign-in code expired. Try again."));
+			return;
+		}
+		if (error == "access_denied") {
+			_login_finish(TTR("Sign-in was denied on GitHub."));
+			return;
+		}
+		if (!error.is_empty()) {
+			_login_finish(String(answer.get("error_description", error)));
+			return;
+		}
+		const String token = answer.get("access_token", "");
+		if (token.is_empty()) {
+			_login_finish(TTR("GitHub returned an unexpected answer."));
+			return;
+		}
+
+		save_token(token);
+		client->set_token(token);
+		_login_finish(String());
+		_log(TTR("Signed in with GitHub."), LOG_INFO);
+		if (has_saved_config() && !connected) {
+			_verify_and_resume(token);
+		} else {
+			refresh_account();
+		}
+	});
+}
+
+void GitHubSync::sign_out() {
+	cancel_device_login();
+	poll_timer->stop();
+	debounce_timer->stop();
+	connected = false;
+	busy = false;
+	branch_ready = false;
+	DirAccess::remove_absolute(get_token_path());
+	client->set_token(String());
+	account_login = String();
+	_log(TTR("Signed out of GitHub."), LOG_INFO);
+	_emit_status(TTR("Not connected"), STATUS_DISCONNECTED);
+	emit_signal("account_changed", String());
+	emit_signal("connection_changed", false);
+}
+
+void GitHubSync::refresh_account() {
+	const String token = load_token();
+	if (token.is_empty()) {
+		account_login = String();
+		emit_signal("account_changed", String());
+		return;
+	}
+	client->set_token(token);
+	client->get_user([this](const Dictionary &p_me) {
+		if (_res_ok(p_me)) {
+			account_login = _res_data(p_me).get("login", "");
+		} else if (_res_code(p_me) == 401) {
+			account_login = String();
+		} else {
+			return; // Offline: leave the UI as it is.
+		}
+		emit_signal("account_changed", account_login);
+	});
+}
+
+void GitHubSync::list_my_repos(const std::function<void(const Vector<String> &, const String &)> &p_cb) {
+	if (load_token().is_empty()) {
+		p_cb(Vector<String>(), TTR("Sign in with GitHub first."));
+		return;
+	}
+	client->set_token(load_token());
+	client->list_user_repos([p_cb](const Dictionary &p_res) {
+		Vector<String> names;
+		const Variant answer = p_res["data"];
+		if (!_res_ok(p_res) || answer.get_type() != Variant::ARRAY) {
+			p_cb(names, _res_error(p_res));
+			return;
+		}
+		for (const Variant &item : Array(answer)) {
+			const Dictionary repo_info = item;
+			names.push_back(repo_info.get("full_name", ""));
+		}
+		p_cb(names, String());
 	});
 }
 

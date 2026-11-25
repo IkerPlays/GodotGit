@@ -67,6 +67,7 @@ private:
 	void _request_completed(int p_result, int p_code, const PackedStringArray &p_headers, const PackedByteArray &p_body, int p_id);
 	void _fail_deferred(int p_id, const String &p_message);
 
+	void _send(HTTPClient::Method p_method, const String &p_url, const Variant &p_body, const Callback &p_callback, const Vector<String> &p_extra_headers, bool p_authenticated);
 	static Dictionary _make_result(bool p_ok, int p_code, const Variant &p_data, const Dictionary &p_headers, const String &p_error);
 
 protected:
@@ -88,6 +89,11 @@ public:
 	void list_branches(const String &p_owner, const String &p_repo, const Callback &p_cb);
 	void add_collaborator(const String &p_owner, const String &p_repo, const String &p_username, const Callback &p_cb);
 	void list_commits(const String &p_owner, const String &p_repo, const String &p_branch, int p_per_page, const Callback &p_cb);
+
+	// OAuth device flow: lets the user sign in with their GitHub account, no token to paste.
+	void request_device_code(const String &p_client_id, const Callback &p_cb);
+	void poll_device_token(const String &p_client_id, const String &p_device_code, const Callback &p_cb);
+	void list_user_repos(const Callback &p_cb);
 
 	// Git Data API.
 	void get_ref(const String &p_owner, const String &p_repo, const String &p_branch, const String &p_etag, const Callback &p_cb);

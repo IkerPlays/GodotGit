@@ -11,33 +11,54 @@ Cualquier proyecto abierto con este motor puede conectarse a un repositorio de G
 
 ## Uso
 
+### Iniciar sesión (cuenta normal de GitHub, sin pegar tokens)
+Panel **GitHub** → **Sign in with GitHub**:
+
+1. Aparece un código (p. ej. `ABCD-1234`) y se abre `github.com/login/device`.
+2. Escribes el código en GitHub e inicias sesión / autorizas con tu cuenta de siempre (2FA incluido).
+3. El editor queda conectado: ves tus repositorios en un desplegable y eliges uno (o creas uno nuevo).
+
+Es el *device flow* de OAuth de GitHub: no se pega ningún token y no hay servidor intermedio.
+La sesión se guarda en tu equipo; **Sign out** la borra.
+
 ### Al crear un proyecto
 En **Crear nuevo proyecto** hay un campo **GitHub Repository (optional)**:
 
 1. Escribe `usuario/repositorio` o pega la URL.
 2. Deja marcado **Create it if missing (private)** si quieres que se cree (privado) cuando no exista.
-3. La primera vez te pide el **token** (ver abajo); se guarda y no vuelve a pedirse.
-
-Al abrir el proyecto, el editor se conecta solo, crea el repo si hace falta y sube el proyecto.
+3. Al abrir el proyecto, el editor abre el panel GitHub (si aún no has iniciado sesión), te conecta y sube el proyecto.
 
 ### En un proyecto ya abierto
-Panel **GitHub** → pega el token y:
-- **Connect**: `usuario/repo` (o URL) y rama opcional. Si el repo ya tiene contenido, se descarga.
-- **Create and connect**: crea un repo nuevo en tu cuenta.
+Panel **GitHub**: elige un repo de tu lista o escribe `usuario/repo` (o URL) y rama opcional → **Connect**.
+Si el repo ya tiene contenido, se descarga. **Create and connect** crea un repo nuevo en tu cuenta.
 
 ### Colaborar
-Usa **Invite** (hace falta ser admin del repo) o invita desde GitHub. Tu compañero crea/abre un proyecto,
-se conecta al mismo repo y recibe todo. Cada uno usa su propio token.
+**Invite** (hace falta ser admin del repo) o invita desde GitHub. Tu compañero inicia sesión con **su** cuenta,
+se conecta al mismo repo y recibe todo.
 
-## Token
+## Configuración del inicio de sesión (una vez por build del motor)
 
-Clásico con permiso `repo` (<https://github.com/settings/tokens/new?scopes=repo>), o fine-grained con
-**Contents: Read & write** sobre el repo (para crear repos hace falta el clásico).
+El inicio de sesión necesita el **Client ID** de una *OAuth App* de GitHub (es público, no es un secreto):
 
-- Se guarda en `<carpeta de config del editor>/github_token` con permisos `600` (solo tu usuario).
+1. GitHub → Settings → Developer settings → OAuth Apps → **New OAuth App**
+   (<https://github.com/settings/developers>). Nombre y URL de inicio: lo que quieras.
+   La *callback URL* no se usa pero es obligatoria (pon `http://localhost`).
+2. En la app marca **Enable Device Flow**.
+3. Copia el **Client ID** y ponlo en `DEFAULT_CLIENT_ID` de `github_sync.cpp`
+   (así todo el que use tu motor inicia sesión sin hacer nada más), o bien en la variable de entorno
+   `GODOT_GITHUB_CLIENT_ID`, o en el archivo `<carpeta de config del editor>/github_client_id`.
+
+Permiso que se pide a cada usuario: `repo` (leer/escribir sus repos).
+
+## Alternativa: token personal
+
+Panel **GitHub** → *Use a personal access token instead*, o la variable de entorno `GITHUB_TOKEN`.
+Clásico con permiso `repo`, o fine-grained con **Contents: Read & write**.
+
+- La sesión/token se guarda en `<carpeta de config del editor>/github_token` con permisos `600`.
   Nunca va dentro del proyecto ni a GitHub.
-- También se lee de la variable de entorno `GITHUB_TOKEN`.
-- `GODOT_GITHUB_API_URL` cambia la raíz de la API (GitHub Enterprise: `https://HOST/api/v3`).
+- `GODOT_GITHUB_API_URL` / `GODOT_GITHUB_LOGIN_URL` cambian los hosts (GitHub Enterprise: `https://HOST/api/v3`
+  y `https://HOST`).
 
 ## Cómo funciona
 
@@ -79,7 +100,7 @@ Cada pasada compara tres estados por archivo (hash de blob de git): **base** (ú
 
 | archivo | contenido |
 |---|---|
-| `github_client.*` | cliente asíncrono mínimo de la API REST de GitHub |
+| `github_client.*` | cliente asíncrono mínimo de la API REST de GitHub y del device flow de OAuth |
 | `github_sync.*` | motor de sincronización (3 vías, push/pull, sondeo con ETag, ignorados, persistencia) |
 | `github_sync_dock.*` | panel «GitHub» del editor |
 | `github_sync_plugin.*` | `EditorPlugin` integrado: panel inferior + botón de estado |

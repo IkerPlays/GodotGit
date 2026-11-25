@@ -52,6 +52,7 @@ GitHubSyncEditorPlugin::GitHubSyncEditorPlugin() {
 	toolbar_button->connect(SceneStringName(pressed), callable_mp(this, &GitHubSyncEditorPlugin::_toolbar_pressed));
 
 	sync->connect("status_changed", callable_mp(this, &GitHubSyncEditorPlugin::_on_status_changed));
+	sync->connect("login_required", callable_mp(this, &GitHubSyncEditorPlugin::_toolbar_pressed));
 	connect("scene_saved", callable_mp(this, &GitHubSyncEditorPlugin::_on_scene_saved));
 	connect("resource_saved", callable_mp(this, &GitHubSyncEditorPlugin::_on_resource_saved));
 }

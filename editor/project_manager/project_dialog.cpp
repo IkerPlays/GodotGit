@@ -647,9 +647,6 @@ void ProjectDialog::ok_pressed() {
 
 		// Connect the new project to its GitHub repository: the editor picks this up when it opens the project.
 		if (!github_target.is_empty()) {
-			if (!github_token->get_text().strip_edges().is_empty()) {
-				GitHubSync::save_token(github_token->get_text());
-			}
 			const Error github_err = GitHubSync::write_project_config(path, github_target[0], github_target[1], String(), github_create->is_pressed(), true);
 			if (github_err != OK) {
 				ERR_PRINT("Couldn't write the GitHub sync configuration in the project path.");
@@ -968,7 +965,7 @@ void ProjectDialog::show_dialog(bool p_reset_name, bool p_is_confirmed) {
 			renderer_container->show();
 			default_files_container->show();
 			github_container->show();
-			github_token->set_visible(GitHubSync::load_token().is_empty());
+			github_hint->set_visible(GitHubSync::load_token().is_empty());
 			edit_check_box->hide();
 
 			callable_mp((Control *)project_name, &Control::grab_focus).call_deferred(false);
@@ -1268,11 +1265,10 @@ ProjectDialog::ProjectDialog() {
 	github_create->set_pressed(true);
 	github_row->add_child(github_create);
 
-	github_token = memnew(LineEdit);
-	github_token->set_secret(true);
-	github_token->set_placeholder(TTRC("GitHub token (saved once, only on this computer)"));
-	github_token->set_accessibility_name(TTRC("GitHub token"));
-	github_container->add_child(github_token);
+	github_hint = memnew(Label);
+	github_hint->set_text(TTRC("You will sign in with your GitHub account when the project opens."));
+	github_hint->set_modulate(Color(1, 1, 1, 0.7));
+	github_container->add_child(github_hint);
 	fdialog_install = memnew(EditorFileDialog);
 	fdialog_install->set_access(EditorFileDialog::ACCESS_FILESYSTEM);
 	add_child(fdialog_install);

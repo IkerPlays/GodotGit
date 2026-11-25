@@ -38,6 +38,12 @@
 static const char *GITHUB_API_URL = "https://api.github.com";
 
 // GODOT_GITHUB_API_URL overrides the API root (GitHub Enterprise: https://HOST/api/v3).
+// GODOT_GITHUB_LOGIN_URL overrides the OAuth host (default https://github.com).
+static String _login_url() {
+	const String custom = OS::get_singleton()->get_environment("GODOT_GITHUB_LOGIN_URL").strip_edges();
+	return custom.is_empty() ? String("https://github.com") : custom.trim_suffix("/");
+}
+
 static String _api_url() {
 	const String custom = OS::get_singleton()->get_environment("GODOT_GITHUB_API_URL").strip_edges();
 	return custom.is_empty() ? String(GITHUB_API_URL) : custom.trim_suffix("/");
@@ -75,6 +81,10 @@ String GitHubClient::repo_path(const String &p_owner, const String &p_repo) {
 }
 
 void GitHubClient::request(HTTPClient::Method p_method, const String &p_path, const Variant &p_body, const Callback &p_callback, const Vector<String> &p_extra_headers) {
+	_send(p_method, _api_url() + p_path, p_body, p_callback, p_extra_headers, true);
+}
+
+void GitHubClient::_send(HTTPClient::Method p_method, const String &p_url, const Variant &p_body, const Callback &p_callback, const Vector<String> &p_extra_headers, bool p_authenticated) {
 	HTTPRequest *http = memnew(HTTPRequest);
 	http->set_accept_gzip(true);
 	http->set_timeout(40.0);
@@ -90,7 +100,7 @@ void GitHubClient::request(HTTPClient::Method p_method, const String &p_path, co
 	headers.push_back("Accept: application/vnd.github+json");
 	headers.push_back("X-GitHub-Api-Version: 2022-11-28");
 	headers.push_back(String("User-Agent: ") + GITHUB_USER_AGENT);
-	if (!token.is_empty()) {
+	if (p_authenticated && !token.is_empty()) {
 		headers.push_back("Authorization: Bearer " + token);
 	}
 	headers.append_array(p_extra_headers);
@@ -102,7 +112,7 @@ void GitHubClient::request(HTTPClient::Method p_method, const String &p_path, co
 	}
 
 	http->connect("request_completed", callable_mp(this, &GitHubClient::_request_completed).bind(id));
-	const Error err = http->request(_api_url() + p_path, headers, p_method, payload);
+	const Error err = http->request(p_url, headers, p_method, payload);
 	if (err != OK) {
 		callable_mp(this, &GitHubClient::_fail_deferred).bind(id, vformat(TTR("Could not start the request (error %d)."), (int)err)).call_deferred();
 	}
@@ -268,4 +278,29 @@ void GitHubClient::put_file(const String &p_owner, const String &p_repo, const S
 	body["message"] = p_message;
 	body["content"] = _base64_encode(p_content);
 	request(HTTPClient::METHOD_PUT, vformat("%s/contents/%s", repo_path(p_owner, p_repo), encode_path(p_path)), body, p_cb);
+}
+
+// ----------------------------------------------- OAuth device flow (no secret needed)
+
+void GitHubClient::request_device_code(const String &p_client_id, const Callback &p_cb) {
+	Dictionary body;
+	body["client_id"] = p_client_id;
+	body["scope"] = "repo";
+	Vector<String> extra;
+	extra.push_back("Accept: application/json");
+	_send(HTTPClient::METHOD_POST, _login_url() + "/login/device/code", body, p_cb, extra, false);
+}
+
+void GitHubClient::poll_device_token(const String &p_client_id, const String &p_device_code, const Callback &p_cb) {
+	Dictionary body;
+	body["client_id"] = p_client_id;
+	body["device_code"] = p_device_code;
+	body["grant_type"] = "urn:ietf:params:oauth:grant-type:device_code";
+	Vector<String> extra;
+	extra.push_back("Accept: application/json");
+	_send(HTTPClient::METHOD_POST, _login_url() + "/login/oauth/access_token", body, p_cb, extra, false);
+}
+
+void GitHubClient::list_user_repos(const Callback &p_cb) {
+	request(HTTPClient::METHOD_GET, "/user/repos?per_page=100&sort=pushed&affiliation=owner,collaborator,organization_member", Variant(), p_cb);
 }

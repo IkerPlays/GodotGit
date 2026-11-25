@@ -39,6 +39,7 @@ class HBoxContainer;
 class Label;
 class LineEdit;
 class LinkButton;
+class OptionButton;
 class RichTextLabel;
 class SpinBox;
 
@@ -50,6 +51,16 @@ class GitHubSyncDock : public VBoxContainer {
 
 	// "Not connected" view.
 	VBoxContainer *connect_box = nullptr;
+	Label *account_label = nullptr;
+	Button *signin_button = nullptr;
+	Button *signout_button = nullptr;
+	HBoxContainer *code_row = nullptr;
+	Label *code_label = nullptr;
+	String current_code;
+	String current_uri;
+	OptionButton *repo_picker = nullptr;
+	HBoxContainer *token_row = nullptr;
+	Button *advanced_button = nullptr;
 	LineEdit *token_edit = nullptr;
 	LineEdit *repo_edit = nullptr;
 	LineEdit *branch_edit = nullptr;
@@ -74,6 +85,19 @@ class GitHubSyncDock : public VBoxContainer {
 	void _build_connected_box();
 	void _set_connecting(bool p_active);
 	void _show_error(const String &p_error);
+
+	void _signin_pressed();
+	void _signout_pressed();
+	void _cancel_login_pressed();
+	void _copy_code_pressed();
+	void _open_code_page_pressed();
+	void _toggle_advanced();
+	void _refresh_repos();
+	void _repo_picked(int p_index);
+	void _update_account_ui();
+
+	void _on_device_code(const String &p_code, const String &p_uri);
+	void _on_account_changed(const String &p_login);
 
 	void _connect_pressed();
 	void _create_pressed();

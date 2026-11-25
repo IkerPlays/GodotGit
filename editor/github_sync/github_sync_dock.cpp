@@ -44,8 +44,10 @@
 #include "scene/gui/label.h"
 #include "scene/gui/line_edit.h"
 #include "scene/gui/link_button.h"
+#include "scene/gui/option_button.h"
 #include "scene/gui/rich_text_label.h"
 #include "scene/gui/spin_box.h"
+#include "servers/display/display_server.h"
 
 static Label *_make_label(const String &p_text) {
 	Label *label = memnew(Label);
@@ -82,7 +84,10 @@ void GitHubSyncDock::build() {
 	sync->connect("status_changed", callable_mp(this, &GitHubSyncDock::_on_status_changed));
 	sync->connect("log_message", callable_mp(this, &GitHubSyncDock::_on_log));
 	sync->connect("activity_updated", callable_mp(this, &GitHubSyncDock::_on_activity));
+	sync->connect("device_code", callable_mp(this, &GitHubSyncDock::_on_device_code));
+	sync->connect("account_changed", callable_mp(this, &GitHubSyncDock::_on_account_changed));
 	_on_connection_changed(sync->is_repo_connected());
+	_update_account_ui();
 }
 
 void GitHubSyncDock::_notification(int p_what) {
@@ -103,27 +108,63 @@ void GitHubSyncDock::_build_connect_box() {
 	intro->set_autowrap_mode(TextServer::AUTOWRAP_WORD_SMART);
 	connect_box->add_child(intro);
 
+	// Step 1: GitHub account.
+	HBoxContainer *account_row = memnew(HBoxContainer);
+	connect_box->add_child(account_row);
+	account_label = memnew(Label);
+	account_label->set_h_size_flags(Control::SIZE_EXPAND_FILL);
+	account_row->add_child(account_label);
+	signin_button = memnew(Button);
+	signin_button->set_text(TTR("Sign in with GitHub"));
+	signin_button->connect(SceneStringName(pressed), callable_mp(this, &GitHubSyncDock::_signin_pressed));
+	account_row->add_child(signin_button);
+	signout_button = memnew(Button);
+	signout_button->set_text(TTR("Sign out"));
+	signout_button->connect(SceneStringName(pressed), callable_mp(this, &GitHubSyncDock::_signout_pressed));
+	account_row->add_child(signout_button);
+
+	code_row = memnew(HBoxContainer);
+	code_row->hide();
+	connect_box->add_child(code_row);
+	code_row->add_child(_make_label(TTR("Enter this code on github.com/login/device:")));
+	code_label = memnew(Label);
+	code_label->add_theme_font_size_override(SceneStringName(font_size), 22 * EDSCALE);
+	code_row->add_child(code_label);
+	Button *copy_code = memnew(Button);
+	copy_code->set_text(TTR("Copy code"));
+	copy_code->connect(SceneStringName(pressed), callable_mp(this, &GitHubSyncDock::_copy_code_pressed));
+	code_row->add_child(copy_code);
+	Button *open_page = memnew(Button);
+	open_page->set_text(TTR("Open GitHub"));
+	open_page->connect(SceneStringName(pressed), callable_mp(this, &GitHubSyncDock::_open_code_page_pressed));
+	code_row->add_child(open_page);
+	Button *cancel_login = memnew(Button);
+	cancel_login->set_text(TTR("Cancel"));
+	cancel_login->connect(SceneStringName(pressed), callable_mp(this, &GitHubSyncDock::_cancel_login_pressed));
+	code_row->add_child(cancel_login);
+
+	// Step 2: repository.
 	GridContainer *grid = memnew(GridContainer);
 	grid->set_columns(2);
 	grid->add_theme_constant_override("h_separation", 12 * EDSCALE);
 	connect_box->add_child(grid);
 
-	grid->add_child(_make_label(TTR("GitHub token")));
-	HBoxContainer *token_row = memnew(HBoxContainer);
-	token_row->set_h_size_flags(Control::SIZE_EXPAND_FILL);
-	grid->add_child(token_row);
-	token_edit = memnew(LineEdit);
-	token_edit->set_secret(true);
-	token_edit->set_placeholder(TTR("ghp_... or github_pat_..."));
-	token_edit->set_h_size_flags(Control::SIZE_EXPAND_FILL);
-	token_edit->set_text(GitHubSync::load_token());
-	token_row->add_child(token_edit);
-	LinkButton *token_link = memnew(LinkButton);
-	token_link->set_text(TTR("Create token"));
-	token_link->set_uri("https://github.com/settings/tokens/new?scopes=repo&description=Godot");
-	token_row->add_child(token_link);
+	grid->add_child(_make_label(TTR("Your repositories")));
+	HBoxContainer *picker_row = memnew(HBoxContainer);
+	picker_row->set_h_size_flags(Control::SIZE_EXPAND_FILL);
+	grid->add_child(picker_row);
+	repo_picker = memnew(OptionButton);
+	repo_picker->set_h_size_flags(Control::SIZE_EXPAND_FILL);
+	repo_picker->set_fit_to_longest_item(false);
+	repo_picker->add_item(TTR("Choose one of your repositories..."));
+	repo_picker->connect(SceneStringName(item_selected), callable_mp(this, &GitHubSyncDock::_repo_picked));
+	picker_row->add_child(repo_picker);
+	Button *refresh_repos = memnew(Button);
+	refresh_repos->set_text(TTR("Refresh"));
+	refresh_repos->connect(SceneStringName(pressed), callable_mp(this, &GitHubSyncDock::_refresh_repos));
+	picker_row->add_child(refresh_repos);
 
-	grid->add_child(_make_label(TTR("Existing repository")));
+	grid->add_child(_make_label(TTR("Repository")));
 	HBoxContainer *repo_row = memnew(HBoxContainer);
 	repo_row->set_h_size_flags(Control::SIZE_EXPAND_FILL);
 	grid->add_child(repo_row);
@@ -161,11 +202,25 @@ void GitHubSyncDock::_build_connect_box() {
 	connect_message->set_autowrap_mode(TextServer::AUTOWRAP_WORD_SMART);
 	connect_box->add_child(connect_message);
 
-	Label *hint = memnew(Label);
-	hint->set_text(TTR("The token (\"repo\" permission) is stored only in your editor configuration folder, never in the project or on GitHub. The GITHUB_TOKEN environment variable is also supported."));
-	hint->set_modulate(Color(1, 1, 1, 0.55));
-	hint->set_autowrap_mode(TextServer::AUTOWRAP_WORD_SMART);
-	connect_box->add_child(hint);
+	// Advanced: personal access token instead of the account sign-in.
+	advanced_button = memnew(Button);
+	advanced_button->set_flat(true);
+	advanced_button->set_text(TTR("Use a personal access token instead"));
+	advanced_button->set_h_size_flags(Control::SIZE_SHRINK_BEGIN);
+	advanced_button->connect(SceneStringName(pressed), callable_mp(this, &GitHubSyncDock::_toggle_advanced));
+	connect_box->add_child(advanced_button);
+	token_row = memnew(HBoxContainer);
+	token_row->hide();
+	connect_box->add_child(token_row);
+	token_edit = memnew(LineEdit);
+	token_edit->set_secret(true);
+	token_edit->set_placeholder(TTR("ghp_... or github_pat_... (only needed if you don't sign in)"));
+	token_edit->set_h_size_flags(Control::SIZE_EXPAND_FILL);
+	token_row->add_child(token_edit);
+	LinkButton *token_link = memnew(LinkButton);
+	token_link->set_text(TTR("Create token"));
+	token_link->set_uri("https://github.com/settings/tokens/new?scopes=repo&description=Godot");
+	token_row->add_child(token_link);
 }
 
 void GitHubSyncDock::_build_connected_box() {
@@ -262,6 +317,90 @@ void GitHubSyncDock::_show_error(const String &p_error) {
 	connect_message->set_text(p_error);
 }
 
+void GitHubSyncDock::_signin_pressed() {
+	connect_message->set_text(String());
+	ObjectID id = get_instance_id();
+	sync->begin_device_login([id, this](const String &p_error) {
+		if (!ObjectDB::get_instance(id)) {
+			return;
+		}
+		code_row->hide();
+		connect_message->set_text(p_error);
+		_update_account_ui();
+	});
+	_update_account_ui();
+}
+
+void GitHubSyncDock::_signout_pressed() {
+	sync->sign_out();
+}
+
+void GitHubSyncDock::_cancel_login_pressed() {
+	sync->cancel_device_login();
+}
+
+void GitHubSyncDock::_copy_code_pressed() {
+	DisplayServer::get_singleton()->clipboard_set(current_code);
+}
+
+void GitHubSyncDock::_open_code_page_pressed() {
+	OS::get_singleton()->shell_open(current_uri);
+}
+
+void GitHubSyncDock::_toggle_advanced() {
+	token_row->set_visible(!token_row->is_visible());
+}
+
+void GitHubSyncDock::_refresh_repos() {
+	ObjectID id = get_instance_id();
+	sync->list_my_repos([id, this](const Vector<String> &p_names, const String &p_error) {
+		if (!ObjectDB::get_instance(id)) {
+			return;
+		}
+		repo_picker->clear();
+		repo_picker->add_item(TTR("Choose one of your repositories..."));
+		for (const String &name : p_names) {
+			repo_picker->add_item(name);
+		}
+		repo_picker->select(0);
+		if (!p_error.is_empty()) {
+			connect_message->set_text(p_error);
+		}
+	});
+}
+
+void GitHubSyncDock::_repo_picked(int p_index) {
+	if (p_index > 0) {
+		repo_edit->set_text(repo_picker->get_item_text(p_index));
+	}
+}
+
+void GitHubSyncDock::_update_account_ui() {
+	const bool signed_in = !sync->get_account_login().is_empty();
+	const bool in_progress = sync->is_login_in_progress();
+	account_label->set_text(signed_in ? vformat(TTR("Signed in as %s"), sync->get_account_login()) : TTR("Not signed in to GitHub"));
+	signin_button->set_visible(!signed_in);
+	signin_button->set_disabled(in_progress);
+	signout_button->set_visible(signed_in);
+	code_row->set_visible(in_progress && !current_code.is_empty());
+	repo_picker->set_disabled(!signed_in);
+}
+
+void GitHubSyncDock::_on_device_code(const String &p_code, const String &p_uri) {
+	current_code = p_code;
+	current_uri = p_uri;
+	code_label->set_text(p_code);
+	_update_account_ui();
+}
+
+void GitHubSyncDock::_on_account_changed(const String &p_login) {
+	current_code = String();
+	_update_account_ui();
+	if (!p_login.is_empty()) {
+		_refresh_repos();
+	}
+}
+
 void GitHubSyncDock::_connect_pressed() {
 	const Vector<String> parsed = GitHubSync::parse_repo(repo_edit->get_text());
 	if (parsed.is_empty()) {
@@ -316,14 +455,14 @@ void GitHubSyncDock::_on_connection_changed(bool p_connected) {
 	connect_box->set_visible(!p_connected);
 	connected_box->set_visible(p_connected);
 	if (p_connected) {
-		repo_label->set_text(vformat("%s/%s  -  %s", sync->get_repo_owner(), sync->get_repo_name(), sync->get_branch()));
+		repo_label->set_text(vformat("%s/%s  -  %s  -  @%s", sync->get_repo_owner(), sync->get_repo_name(), sync->get_branch(), sync->get_user_login()));
 		auto_check->set_pressed_no_signal(sync->is_auto_sync());
 		poll_spin->set_value_no_signal(sync->get_poll_seconds());
 		activity->clear();
 		log->clear();
 		connect_message->set_text(String());
 	} else {
-		token_edit->set_text(GitHubSync::load_token());
+		_update_account_ui();
 		if (sync->has_saved_config()) {
 			repo_edit->set_text(sync->get_repo_owner() + "/" + sync->get_repo_name());
 			branch_edit->set_text(sync->get_branch());

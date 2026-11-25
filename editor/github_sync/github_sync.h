@@ -127,6 +127,16 @@ private:
 	GitHubClient *client = nullptr;
 	Timer *poll_timer = nullptr;
 	Timer *debounce_timer = nullptr;
+	Timer *login_timer = nullptr;
+
+	// Account sign-in (OAuth device flow).
+	bool login_active = false;
+	String login_client_id;
+	String login_device_code;
+	double login_interval = 5.0;
+	double login_expires_at = 0.0;
+	ErrorCallback login_cb;
+	String account_login;
 
 	String repo_owner;
 	String repo;
@@ -162,6 +172,10 @@ private:
 	void _create_branch_from_default(const String &p_owner, const String &p_repo, const String &p_wanted, const String &p_default_branch, const ErrorCallback &p_cb);
 	void _after_delay(double p_seconds, const std::function<void()> &p_action);
 	void _run_delayed();
+
+	// Sign-in.
+	void _login_poll();
+	void _login_finish(const String &p_error);
 
 	// Triggers.
 	void _on_poll();
@@ -214,6 +228,7 @@ public:
 
 	static String git_blob_sha(const uint8_t *p_data, size_t p_len);
 	static String get_token_path();
+	static String get_client_id();
 	static String load_token();
 	static void save_token(const String &p_token);
 	static Vector<String> parse_repo(const String &p_text); // [owner, repo] or empty.
@@ -226,6 +241,16 @@ public:
 	// Called once the editor is ready: resumes the connection stored in the project, if any.
 	void start();
 	void shutdown();
+
+	// Sign in with a GitHub account: shows a code to authorize at github.com/login/device
+	// (OAuth device flow). The callback receives "" on success or an error message.
+	void begin_device_login(const ErrorCallback &p_cb);
+	void cancel_device_login();
+	void sign_out();
+	void refresh_account();
+	void list_my_repos(const std::function<void(const Vector<String> &, const String &)> &p_cb);
+	bool is_login_in_progress() const { return login_active; }
+	String get_account_login() const { return account_login; }
 
 	void connect_repo(const String &p_owner, const String &p_repo, const String &p_branch, const String &p_token, const ErrorCallback &p_cb);
 	void create_and_connect(const String &p_repo_name, bool p_private, const String &p_token, const ErrorCallback &p_cb);
