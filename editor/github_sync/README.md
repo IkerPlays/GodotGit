@@ -44,7 +44,7 @@ El inicio de sesión necesita el **Client ID** de una *OAuth App* de GitHub (es 
    (<https://github.com/settings/developers>). Nombre y URL de inicio: lo que quieras.
    La *callback URL* no se usa pero es obligatoria (pon `http://localhost`).
 2. En la app marca **Enable Device Flow**.
-3. Copia el **Client ID** y ponlo en `DEFAULT_CLIENT_ID` de `github_sync.cpp`
+3. Copia el **Client ID** y ponlo en `DEFAULT_CLIENT_ID` de `github_sync.cpp` (ya puesto: `Ov23li6SzlWZociZ8Bvk`)
    (así todo el que use tu motor inicia sesión sin hacer nada más), o bien en la variable de entorno
    `GODOT_GITHUB_CLIENT_ID`, o en el archivo `<carpeta de config del editor>/github_client_id`.
 

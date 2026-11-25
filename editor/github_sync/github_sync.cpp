@@ -58,7 +58,7 @@ static const double DEBOUNCE_SECONDS = 1.5;
 // Public identifier of the GitHub OAuth App used for "Sign in with GitHub" (device flow; it is not a secret).
 // Register one at https://github.com/settings/developers (enable "Device Flow") and put its Client ID here,
 // or provide it at runtime with the GODOT_GITHUB_CLIENT_ID environment variable.
-static const char *DEFAULT_CLIENT_ID = "";
+static const char *DEFAULT_CLIENT_ID = "Ov23li6SzlWZociZ8Bvk";
 static const char *DEFAULT_GITIGNORE = "# Godot 4+\n.godot/\n/android/\n\n# Local GitHub sync state\n.godotgit/\n\n# Temporary files\n*.tmp\n";
 
 static const char *ALWAYS_IGNORED_DIRS[] = { ".godot", ".git", ".godotgit", ".import", ".mono", ".vs", ".idea", nullptr };
