@@ -38,6 +38,7 @@
 #include "core/version.h"
 #include "editor/editor_node.h"
 #include "editor/editor_string_names.h"
+#include "editor/github_sync/github_sync.h"
 #include "editor/gui/editor_file_dialog.h"
 #include "editor/settings/editor_settings.h"
 #include "editor/themes/editor_icons.h"
@@ -561,6 +562,15 @@ void ProjectDialog::ok_pressed() {
 
 	String path = project_path->get_text();
 
+	Vector<String> github_target;
+	if (mode == MODE_NEW && !github_repo->get_text().strip_edges().is_empty()) {
+		github_target = GitHubSync::parse_repo(github_repo->get_text());
+		if (github_target.is_empty()) {
+			_set_message(TTRC("Invalid GitHub repository. Use \"user/repository\" or the repository URL."), MESSAGE_ERROR);
+			return;
+		}
+	}
+
 	if (mode == MODE_NEW) {
 		if (create_dir->is_pressed()) {
 			Ref<DirAccess> d = DirAccess::create(DirAccess::ACCESS_FILESYSTEM);
@@ -633,6 +643,17 @@ void ProjectDialog::ok_pressed() {
 			f->store_line("charset = utf-8");
 			f->close();
 			FileAccess::set_hidden_attribute(editor_config_path, true);
+		}
+
+		// Connect the new project to its GitHub repository: the editor picks this up when it opens the project.
+		if (!github_target.is_empty()) {
+			if (!github_token->get_text().strip_edges().is_empty()) {
+				GitHubSync::save_token(github_token->get_text());
+			}
+			const Error github_err = GitHubSync::write_project_config(path, github_target[0], github_target[1], String(), github_create->is_pressed(), true);
+			if (github_err != OK) {
+				ERR_PRINT("Couldn't write the GitHub sync configuration in the project path.");
+			}
 		}
 	}
 
@@ -875,6 +896,7 @@ void ProjectDialog::show_dialog(bool p_reset_name, bool p_is_confirmed) {
 		install_path_container->hide();
 		renderer_container->hide();
 		default_files_container->hide();
+		github_container->hide();
 
 		callable_mp((Control *)project_name, &Control::grab_focus).call_deferred(false);
 		callable_mp(project_name, &LineEdit::select_all).call_deferred();
@@ -916,6 +938,7 @@ void ProjectDialog::show_dialog(bool p_reset_name, bool p_is_confirmed) {
 			install_path_container->hide();
 			renderer_container->hide();
 			default_files_container->hide();
+			github_container->hide();
 			edit_check_box->show();
 
 			// Project path dialog is also opened; no need to change focus.
@@ -944,6 +967,8 @@ void ProjectDialog::show_dialog(bool p_reset_name, bool p_is_confirmed) {
 			install_path_container->hide();
 			renderer_container->show();
 			default_files_container->show();
+			github_container->show();
+			github_token->set_visible(GitHubSync::load_token().is_empty());
 			edit_check_box->hide();
 
 			callable_mp((Control *)project_name, &Control::grab_focus).call_deferred(false);
@@ -958,6 +983,7 @@ void ProjectDialog::show_dialog(bool p_reset_name, bool p_is_confirmed) {
 			install_path_container->hide();
 			renderer_container->hide();
 			default_files_container->hide();
+			github_container->hide();
 			edit_check_box->show();
 
 			callable_mp((Control *)project_path, &Control::grab_focus).call_deferred(false);
@@ -969,6 +995,7 @@ void ProjectDialog::show_dialog(bool p_reset_name, bool p_is_confirmed) {
 			install_path_container->hide();
 			renderer_container->hide();
 			default_files_container->hide();
+			github_container->hide();
 			edit_check_box->set_visible(duplicate_can_edit);
 
 			callable_mp((Control *)project_name, &Control::grab_focus).call_deferred(false);
@@ -1219,6 +1246,33 @@ ProjectDialog::ProjectDialog() {
 	Control *spacer = memnew(Control);
 	spacer->set_h_size_flags(Control::SIZE_EXPAND_FILL);
 	default_files_container->add_child(spacer);
+
+	github_container = memnew(VBoxContainer);
+	vb->add_child(github_container);
+
+	l = memnew(Label);
+	l->set_text(TTRC("GitHub Repository (optional):"));
+	github_container->add_child(l);
+
+	HBoxContainer *github_row = memnew(HBoxContainer);
+	github_container->add_child(github_row);
+
+	github_repo = memnew(LineEdit);
+	github_repo->set_placeholder(TTRC("user/repository or https://github.com/user/repository"));
+	github_repo->set_h_size_flags(Control::SIZE_EXPAND_FILL);
+	github_repo->set_accessibility_name(TTRC("GitHub Repository (optional):"));
+	github_row->add_child(github_repo);
+
+	github_create = memnew(CheckBox);
+	github_create->set_text(TTRC("Create it if missing (private)"));
+	github_create->set_pressed(true);
+	github_row->add_child(github_create);
+
+	github_token = memnew(LineEdit);
+	github_token->set_secret(true);
+	github_token->set_placeholder(TTRC("GitHub token (saved once, only on this computer)"));
+	github_token->set_accessibility_name(TTRC("GitHub token"));
+	github_container->add_child(github_token);
 	fdialog_install = memnew(EditorFileDialog);
 	fdialog_install->set_access(EditorFileDialog::ACCESS_FILESYSTEM);
 	add_child(fdialog_install);

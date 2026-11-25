@@ -98,6 +98,11 @@ private:
 
 	OptionButton *vcs_metadata_selection = nullptr;
 
+	VBoxContainer *github_container = nullptr;
+	LineEdit *github_repo = nullptr;
+	LineEdit *github_token = nullptr;
+	CheckBox *github_create = nullptr;
+
 	CheckBox *edit_check_box = nullptr;
 
 	EditorFileDialog *fdialog_project = nullptr;

@@ -81,6 +81,7 @@
 #include "editor/export/register_exporters.h"
 #include "editor/file_system/dependency_editor.h"
 #include "editor/file_system/editor_paths.h"
+#include "editor/github_sync/github_sync_plugin.h"
 #include "editor/gui/editor_about.h"
 #include "editor/gui/editor_bottom_panel.h"
 #include "editor/gui/editor_file_dialog.h"
@@ -9652,6 +9653,7 @@ EditorNode::EditorNode() {
 	add_editor_plugin(memnew(AnimationMarkerKeyEditEditorPlugin));
 
 	add_editor_plugin(VersionControlEditorPlugin::get_singleton());
+	add_editor_plugin(memnew(GitHubSyncEditorPlugin));
 
 	add_editor_plugin(memnew(AudioBusesEditorPlugin(audio_bus_editor)));
 

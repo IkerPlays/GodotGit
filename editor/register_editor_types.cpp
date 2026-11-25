@@ -53,6 +53,10 @@
 #include "editor/export/register_exporters.h"
 #include "editor/file_system/editor_file_system.h"
 #include "editor/file_system/editor_paths.h"
+#include "editor/github_sync/github_client.h"
+#include "editor/github_sync/github_sync.h"
+#include "editor/github_sync/github_sync_dock.h"
+#include "editor/github_sync/github_sync_plugin.h"
 #include "editor/gui/editor_file_dialog.h"
 #include "editor/gui/editor_spin_slider.h"
 #include "editor/gui/editor_toaster.h"
@@ -168,6 +172,12 @@ void register_editor_types() {
 	GDREGISTER_ABSTRACT_CLASS(EditorFileSystem);
 	GDREGISTER_CLASS(EditorFileSystemDirectory);
 	GDREGISTER_CLASS(EditorVCSInterface);
+
+	// Built-in GitHub synchronization (not exposed to scripting).
+	GDREGISTER_INTERNAL_CLASS(GitHubClient);
+	GDREGISTER_INTERNAL_CLASS(GitHubSync);
+	GDREGISTER_INTERNAL_CLASS(GitHubSyncDock);
+	GDREGISTER_INTERNAL_CLASS(GitHubSyncEditorPlugin);
 	GDREGISTER_ABSTRACT_CLASS(ScriptEditor);
 	GDREGISTER_ABSTRACT_CLASS(ScriptEditorBase);
 	GDREGISTER_CLASS(EditorSyntaxHighlighter);
