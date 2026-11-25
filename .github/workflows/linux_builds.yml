@@ -42,8 +42,9 @@ jobs:
             proj-export: true
             api-compat: true
             artifact: true
-            # Validate godot-cpp compatibility on one arbitrary editor build.
-            godot-cpp: true
+            # godot-cpp validation is disabled in this fork: with the longer checkout path
+            # (GodotGit/GodotGit) its `ar` call exceeds the shell's argument list limit.
+            godot-cpp: false
             clangd-tidy: true
 
           - name: Editor with doubles and GCC sanitizers (target=editor, dev_build=yes, scu_build=yes, precision=double, use_asan=yes, use_ubsan=yes, linker=mold)

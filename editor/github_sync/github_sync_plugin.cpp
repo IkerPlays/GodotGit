@@ -68,8 +68,13 @@ void GitHubSyncEditorPlugin::_notification(int p_what) {
 
 		case NOTIFICATION_EXIT_TREE: {
 			sync->shutdown();
+			// The bottom panel and the toolbar only detach what they were given; we own both controls.
 			EditorNode::get_bottom_panel()->remove_item(dock);
 			remove_control_from_container(CONTAINER_TOOLBAR, toolbar_button);
+			memdelete(dock);
+			memdelete(toolbar_button);
+			dock = nullptr;
+			toolbar_button = nullptr;
 		} break;
 	}
 }
@@ -87,6 +92,9 @@ void GitHubSyncEditorPlugin::_on_resource_saved(const Ref<Resource> &p_resource)
 }
 
 void GitHubSyncEditorPlugin::_on_status_changed(const String &p_text, int p_status) {
+	if (!toolbar_button) {
+		return;
+	}
 	String icon = String::utf8("○");
 	switch (p_status) {
 		case GitHubSync::STATUS_IDLE: {
