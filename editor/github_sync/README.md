@@ -86,8 +86,13 @@ Every pass compares three states per file (git blob hash): **base** (last synchr
 - **Retries**: without network, or on errors, checks back off exponentially (up to 60 s).
 - **Ignored**: `.godot/`, `.git/`, `.godotgit/`, temporary files and whatever your `.gitignore` says
   (simple patterns: `*.ext`, `folder/`, `/path`; no `!` negations). A default `.gitignore` is created if missing.
-- **Local state**: `res://.godotgit/` (`config.cfg` with the repository, `state.json`, `conflicts/`), with a `.gdignore`
-  and added to `.gitignore`. Use **Disconnect** to stop syncing.
+- **Repository link**: saved in the project itself, in `.godot_github.cfg` (owner, repository, branch; no secrets).
+  It is synchronized with the repository, so anyone who opens the project (another computer, a fresh checkout, a teammate)
+  is linked automatically and only has to sign in. Projects linked by older versions are migrated on open.
+- **Local state**: `res://.godotgit/` (`config.cfg` with your sync preferences, `state.json`, `conflicts/`), with a
+  `.gdignore` and added to `.gitignore`. Use **Disconnect** to stop syncing and remove the link.
+- **Expired session**: if GitHub rejects the saved session (expired or revoked) syncing stops instead of retrying forever,
+  the GitHub panel opens, and the link and the sync state are kept. Sign in again and it resumes where it stopped.
 
 ## Known limits
 

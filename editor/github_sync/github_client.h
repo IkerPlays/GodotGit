@@ -58,6 +58,7 @@ private:
 	struct Pending {
 		HTTPRequest *http = nullptr;
 		Callback callback;
+		bool authenticated = false;
 	};
 
 	String token;
@@ -71,7 +72,7 @@ private:
 	static Dictionary _make_result(bool p_ok, int p_code, const Variant &p_data, const Dictionary &p_headers, const String &p_error);
 
 protected:
-	static void _bind_methods() {}
+	static void _bind_methods();
 
 public:
 	static String repo_path(const String &p_owner, const String &p_repo);

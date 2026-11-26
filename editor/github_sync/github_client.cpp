@@ -57,6 +57,10 @@ static String _base64_encode(const Vector<uint8_t> &p_data) {
 	return CryptoCore::b64_encode_str(p_data.ptr(), p_data.size());
 }
 
+void GitHubClient::_bind_methods() {
+	ADD_SIGNAL(MethodInfo("unauthorized"));
+}
+
 Dictionary GitHubClient::_make_result(bool p_ok, int p_code, const Variant &p_data, const Dictionary &p_headers, const String &p_error) {
 	Dictionary d;
 	d["ok"] = p_ok;
@@ -94,6 +98,7 @@ void GitHubClient::_send(HTTPClient::Method p_method, const String &p_url, const
 	Pending entry;
 	entry.http = http;
 	entry.callback = p_callback;
+	entry.authenticated = p_authenticated && !token.is_empty();
 	pending[id] = entry;
 
 	Vector<String> headers;
@@ -178,6 +183,9 @@ void GitHubClient::_request_completed(int p_result, int p_code, const PackedStri
 
 	if (entry.callback) {
 		entry.callback(result);
+	}
+	if (p_result == HTTPRequest::RESULT_SUCCESS && p_code == 401 && entry.authenticated) {
+		emit_signal("unauthorized");
 	}
 }
 

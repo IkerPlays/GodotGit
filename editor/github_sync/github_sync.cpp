@@ -49,6 +49,7 @@
 
 GitHubSync *GitHubSync::singleton = nullptr;
 const char *GitHubSync::DATA_DIR_NAME = ".godotgit";
+const char *GitHubSync::LINK_FILE_NAME = ".godot_github.cfg";
 
 static const int64_t MAX_FILE_BYTES = 50 * 1024 * 1024;
 static const int PARALLEL_REQUESTS = 6;
@@ -244,13 +245,24 @@ static Error _write_config_file(const String &p_project_dir, const String &p_own
 		}
 	}
 
+	// The repository link lives in the project root, so it travels with the project (it is synchronized
+	// to the repository itself) and survives losing the local editor state or signing in again.
+	// It holds no secrets.
+	Ref<ConfigFile> link;
+	link.instantiate();
+	link->set_value("github", "owner", p_owner);
+	link->set_value("github", "repo", p_repo);
+	link->set_value("github", "branch", p_branch);
+	link->set_value("github", "create_if_missing", p_create_if_missing);
+	link->set_value("github", "private", p_private);
+	err = link->save(p_project_dir.path_join(GitHubSync::LINK_FILE_NAME));
+	if (err != OK) {
+		return err;
+	}
+
+	// Per-user preferences stay local.
 	Ref<ConfigFile> cfg;
 	cfg.instantiate();
-	cfg->set_value("github", "owner", p_owner);
-	cfg->set_value("github", "repo", p_repo);
-	cfg->set_value("github", "branch", p_branch);
-	cfg->set_value("github", "create_if_missing", p_create_if_missing);
-	cfg->set_value("github", "private", p_private);
 	cfg->set_value("sync", "auto", p_auto);
 	cfg->set_value("sync", "poll_seconds", p_poll_seconds);
 	return cfg->save(data_dir.path_join("config.cfg"));
@@ -261,19 +273,34 @@ Error GitHubSync::write_project_config(const String &p_project_dir, const String
 }
 
 bool GitHubSync::_load_config() {
+	Ref<ConfigFile> link;
+	link.instantiate();
+	const bool have_link = link->load(String("res://") + LINK_FILE_NAME) == OK;
+
 	Ref<ConfigFile> cfg;
 	cfg.instantiate();
-	if (cfg->load(String("res://") + DATA_DIR_NAME + "/config.cfg") != OK) {
+	const bool have_local = cfg->load(String("res://") + DATA_DIR_NAME + "/config.cfg") == OK;
+
+	if (!have_link && !have_local) {
 		return false;
 	}
-	repo_owner = cfg->get_value("github", "owner", "");
-	repo = cfg->get_value("github", "repo", "");
-	branch = cfg->get_value("github", "branch", "");
-	create_if_missing = cfg->get_value("github", "create_if_missing", false);
-	create_private = cfg->get_value("github", "private", true);
-	auto_sync = cfg->get_value("sync", "auto", true);
-	poll_seconds = CLAMP((double)cfg->get_value("sync", "poll_seconds", 4.0), 2.0, 60.0);
-	return !repo_owner.is_empty() && !repo.is_empty();
+	// Projects connected by older versions only have the local file: it is used and migrated below.
+	const Ref<ConfigFile> source = have_link ? link : cfg;
+	repo_owner = source->get_value("github", "owner", "");
+	repo = source->get_value("github", "repo", "");
+	branch = source->get_value("github", "branch", "");
+	create_if_missing = source->get_value("github", "create_if_missing", false);
+	create_private = source->get_value("github", "private", true);
+	if (have_local) {
+		auto_sync = cfg->get_value("sync", "auto", true);
+		poll_seconds = CLAMP((double)cfg->get_value("sync", "poll_seconds", 4.0), 2.0, 60.0);
+	}
+
+	const bool valid = !repo_owner.is_empty() && !repo.is_empty();
+	if (valid && !have_link) {
+		_write_config_file("res://", repo_owner, repo, branch, create_if_missing, create_private, auto_sync, poll_seconds);
+	}
+	return valid;
 }
 
 static String _state_path() {
@@ -357,6 +384,7 @@ GitHubSync::GitHubSync() {
 	singleton = this;
 
 	client = memnew(GitHubClient);
+	client->connect("unauthorized", callable_mp(this, &GitHubSync::_session_expired));
 	add_child(client);
 
 	poll_timer = memnew(Timer);
@@ -678,6 +706,28 @@ void GitHubSync::_login_poll() {
 	});
 }
 
+// GitHub answered 401 to an authenticated request: the saved session expired or was revoked.
+// The repository link and the sync state are kept, so signing in again resumes where it stopped.
+void GitHubSync::_session_expired() {
+	if (!connected) {
+		return;
+	}
+	_save_state();
+	poll_timer->stop();
+	debounce_timer->stop();
+	connected = false;
+	busy = false;
+	again = false;
+	branch_ready = false;
+	DirAccess::remove_absolute(get_token_path());
+	account_login = String();
+	_log(TTR("GitHub rejected the saved session (it expired or was revoked). The repository link is kept: sign in again to continue."), LOG_WARN);
+	_emit_status(TTR("GitHub session expired: sign in again"), STATUS_ERROR);
+	emit_signal("account_changed", String());
+	emit_signal("connection_changed", false);
+	emit_signal("login_required");
+}
+
 void GitHubSync::sign_out() {
 	cancel_device_login();
 	poll_timer->stop();
@@ -743,6 +793,7 @@ void GitHubSync::disconnect_repo() {
 	branch_ready = false;
 	_clear_state();
 	DirAccess::remove_absolute(String("res://") + DATA_DIR_NAME + "/config.cfg");
+	DirAccess::remove_absolute(String("res://") + LINK_FILE_NAME);
 	DirAccess::remove_absolute(_state_path());
 	_log(TTR("Disconnected. Your local files and the repository stay as they are."), LOG_INFO);
 	_emit_status(TTR("Not connected"), STATUS_DISCONNECTED);

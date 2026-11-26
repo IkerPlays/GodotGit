@@ -76,7 +76,8 @@ public:
 
 	using ErrorCallback = std::function<void(const String &p_error)>; // Empty string = success.
 
-	static const char *DATA_DIR_NAME; // ".godotgit"
+	static const char *DATA_DIR_NAME; // ".godotgit" (local state, never synchronized)
+	static const char *LINK_FILE_NAME; // ".godot_github.cfg" (repository link, travels with the project)
 
 private:
 	enum RunResult {
@@ -172,6 +173,8 @@ private:
 	void _create_branch_from_default(const String &p_owner, const String &p_repo, const String &p_wanted, const String &p_default_branch, const ErrorCallback &p_cb);
 	void _after_delay(double p_seconds, const std::function<void()> &p_action);
 	void _run_delayed();
+
+	void _session_expired();
 
 	// Sign-in.
 	void _login_poll();
