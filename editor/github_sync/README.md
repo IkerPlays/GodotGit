@@ -91,6 +91,13 @@ Every pass compares three states per file (git blob hash): **base** (last synchr
   is linked automatically and only has to sign in. Projects linked by older versions are migrated on open.
 - **Local state**: `res://.godotgit/` (`config.cfg` with your sync preferences, `state.json`, `conflicts/`), with a
   `.gdignore` and added to `.gitignore`. Use **Disconnect** to stop syncing and remove the link.
+- **Flaky connections (phones)**: only an HTTP 401 from GitHub means the session is invalid. Outages, rate limits, captive
+  portals or network changes are treated as temporary: the session is kept and syncing retries by itself. A single stray 401
+  is double-checked before the session is dropped. The last known account is cached, so the panel shows "Signed in as ..."
+  immediately even offline.
+- **Interrupted sign-in**: the pending device code is saved, so if the OS kills the app while you authorize in the browser,
+  the sign-in resumes when the editor starts again. On mobile, coming back from the background also triggers an immediate check.
+  On Android the default check interval is 10 s (battery and data friendly).
 - **Expired session**: if GitHub rejects the saved session (expired or revoked) syncing stops instead of retrying forever,
   the GitHub panel opens, and the link and the sync state are kept. Sign in again and it resumes where it stopped.
 

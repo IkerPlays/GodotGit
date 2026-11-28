@@ -86,6 +86,7 @@ void GitHubSyncDock::build() {
 	sync->connect("activity_updated", callable_mp(this, &GitHubSyncDock::_on_activity));
 	sync->connect("device_code", callable_mp(this, &GitHubSyncDock::_on_device_code));
 	sync->connect("account_changed", callable_mp(this, &GitHubSyncDock::_on_account_changed));
+	sync->connect("login_finished", callable_mp(this, &GitHubSyncDock::_on_login_finished));
 	_on_connection_changed(sync->is_repo_connected());
 	_update_account_ui();
 }
@@ -390,6 +391,15 @@ void GitHubSyncDock::_on_device_code(const String &p_code, const String &p_uri) 
 	current_code = p_code;
 	current_uri = p_uri;
 	code_label->set_text(p_code);
+	_update_account_ui();
+}
+
+void GitHubSyncDock::_on_login_finished(const String &p_error) {
+	current_code = String();
+	code_row->hide();
+	if (!p_error.is_empty()) {
+		connect_message->set_text(p_error);
+	}
 	_update_account_ui();
 }
 

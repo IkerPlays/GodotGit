@@ -167,17 +167,46 @@ String GitHubSync::load_token() {
 	return OS::get_singleton()->get_environment("GITHUB_TOKEN").strip_edges();
 }
 
-void GitHubSync::save_token(const String &p_token) {
+bool GitHubSync::save_token(const String &p_token) {
 	const String path = get_token_path();
+	const String wanted = p_token.strip_edges();
+	DirAccess::make_dir_recursive_absolute(path.get_base_dir());
 	Ref<FileAccess> f = FileAccess::open(path, FileAccess::WRITE);
 	if (f.is_null()) {
 		ERR_PRINT("GitHub sync: couldn't save the token to " + path);
-		return;
+		return false;
 	}
-	f->store_string(p_token.strip_edges());
+	f->store_string(wanted);
+	f->flush();
 	f.unref();
 	// Readable by the owner only, like git credential files.
 	FileAccess::set_unix_permissions(path, BitField<FileAccess::UnixPermissionFlags>((int)FileAccess::UNIX_READ_OWNER | (int)FileAccess::UNIX_WRITE_OWNER));
+	// Read it back: on some devices a silent write failure would otherwise look like "the session closed".
+	return FileAccess::get_file_as_string(path).strip_edges() == wanted;
+}
+
+static String _account_cache_path() {
+	return EditorPaths::get_singleton()->get_config_dir().path_join("github_account");
+}
+
+static String _pending_login_path() {
+	return EditorPaths::get_singleton()->get_config_dir().path_join("github_login_pending.json");
+}
+
+// Last known account name: lets the UI show "signed in as ..." right away, even without network.
+static String _load_cached_login() {
+	return FileAccess::exists(_account_cache_path()) ? FileAccess::get_file_as_string(_account_cache_path()).strip_edges() : String();
+}
+
+static void _save_cached_login(const String &p_login) {
+	if (p_login.is_empty()) {
+		DirAccess::remove_absolute(_account_cache_path());
+		return;
+	}
+	Ref<FileAccess> f = FileAccess::open(_account_cache_path(), FileAccess::WRITE);
+	if (f.is_valid()) {
+		f->store_string(p_login);
+	}
 }
 
 Vector<String> GitHubSync::parse_repo(const String &p_text) {
@@ -293,7 +322,7 @@ bool GitHubSync::_load_config() {
 	create_private = source->get_value("github", "private", true);
 	if (have_local) {
 		auto_sync = cfg->get_value("sync", "auto", true);
-		poll_seconds = CLAMP((double)cfg->get_value("sync", "poll_seconds", 4.0), 2.0, 60.0);
+		poll_seconds = CLAMP((double)cfg->get_value("sync", "poll_seconds", poll_seconds), 2.0, 60.0);
 	}
 
 	const bool valid = !repo_owner.is_empty() && !repo.is_empty();
@@ -382,9 +411,12 @@ void GitHubSync::_load_state() {
 
 GitHubSync::GitHubSync() {
 	singleton = this;
+#ifdef ANDROID_ENABLED
+	poll_seconds = 10.0; // Gentler on battery and data.
+#endif
 
 	client = memnew(GitHubClient);
-	client->connect("unauthorized", callable_mp(this, &GitHubSync::_session_expired));
+	client->connect("unauthorized", callable_mp(this, &GitHubSync::_on_unauthorized));
 	add_child(client);
 
 	poll_timer = memnew(Timer);
@@ -419,15 +451,31 @@ void GitHubSync::_bind_methods() {
 	ADD_SIGNAL(MethodInfo("device_code", PropertyInfo(Variant::STRING, "user_code"), PropertyInfo(Variant::STRING, "verification_uri")));
 	ADD_SIGNAL(MethodInfo("account_changed", PropertyInfo(Variant::STRING, "login")));
 	ADD_SIGNAL(MethodInfo("login_required"));
+	ADD_SIGNAL(MethodInfo("login_finished", PropertyInfo(Variant::STRING, "error")));
 }
 
 void GitHubSync::_notification(int p_what) {
-	if (p_what == NOTIFICATION_EXIT_TREE) {
-		shutdown();
+	switch (p_what) {
+		case NOTIFICATION_EXIT_TREE: {
+			shutdown();
+		} break;
+
+		case NOTIFICATION_APPLICATION_RESUMED: {
+			// Mobile: back from the background (for example after authorizing in the browser).
+			if (login_active) {
+				login_timer->stop();
+				_login_poll();
+			} else if (connected && !busy && auto_sync) {
+				_on_poll();
+			}
+		} break;
 	}
 }
 
 void GitHubSync::start() {
+	if (load_token().is_empty()) {
+		_resume_pending_login();
+	}
 	EditorFileSystem *efs = EditorFileSystem::get_singleton();
 	if (efs && !efs->is_connected("filesystem_changed", callable_mp(this, &GitHubSync::notify_local_change))) {
 		efs->connect("filesystem_changed", callable_mp(this, &GitHubSync::notify_local_change));
@@ -461,9 +509,12 @@ void GitHubSync::_verify_and_resume(const String &p_token) {
 	}
 	client->get_user([this](const Dictionary &p_me) {
 		const bool ok = _res_ok(p_me);
-		if (!ok && _res_code(p_me) != 0) {
-			_log(TTR("Couldn't verify the token: ") + _res_error(p_me), LOG_ERROR);
+		if (!ok && _res_code(p_me) == 401) {
+			// Only a 401 means the session is no good. Anything else (5xx, rate limits, captive portals,
+			// network changes) is temporary and must never ask the user to sign in again.
+			_log(TTR("GitHub rejected the saved session: ") + _res_error(p_me), LOG_WARN);
 			_emit_status(TTR("GitHub session expired: sign in again"), STATUS_ERROR);
+			_save_cached_login(String());
 			emit_signal("connection_changed", false);
 			emit_signal("login_required");
 			return;
@@ -471,7 +522,15 @@ void GitHubSync::_verify_and_resume(const String &p_token) {
 		if (ok) {
 			user_login = _res_data(p_me).get("login", "");
 			account_login = user_login;
+			_save_cached_login(account_login);
 			emit_signal("account_changed", account_login);
+		} else {
+			user_login = _load_cached_login();
+			account_login = user_login;
+			if (!account_login.is_empty()) {
+				emit_signal("account_changed", account_login);
+			}
+			_log(vformat(TTR("GitHub is not reachable right now (%s). Your session is kept; retrying."), _res_error(p_me)), LOG_WARN);
 		}
 		_load_state();
 		connected = true;
@@ -479,7 +538,7 @@ void GitHubSync::_verify_and_resume(const String &p_token) {
 		emit_signal("connection_changed", true);
 		poll_timer->start(poll_seconds);
 		if (!ok) {
-			_emit_status(TTR("Offline, retrying..."), STATUS_ERROR);
+			_emit_status(TTR("GitHub not reachable, retrying..."), STATUS_ERROR);
 			return;
 		}
 		sync_now();
@@ -533,8 +592,8 @@ void GitHubSync::connect_repo(const String &p_owner, const String &p_repo, const
 					p_cb(p_error);
 					return;
 				}
-				if (!p_token.strip_edges().is_empty()) {
-					save_token(token);
+				if (!p_token.strip_edges().is_empty() && !save_token(token)) {
+					_log(vformat(TTR("Warning: this device would not store your token (%s)."), get_token_path()), LOG_ERROR);
 				}
 				repo_owner = p_owner;
 				repo = p_repo;
@@ -625,6 +684,7 @@ void GitHubSync::begin_device_login(const ErrorCallback &p_cb) {
 		login_expires_at = OS::get_singleton()->get_unix_time() + (double)answer.get("expires_in", 900);
 		const String user_code = answer.get("user_code", "");
 		const String uri = answer.get("verification_uri", "https://github.com/login/device");
+		_save_pending_login(user_code, uri);
 		emit_signal("device_code", user_code, uri);
 		_log(vformat(TTR("Open %s and enter the code %s to sign in."), uri, user_code), LOG_INFO);
 		OS::get_singleton()->shell_open(uri);
@@ -639,9 +699,55 @@ void GitHubSync::cancel_device_login() {
 	_login_finish(TTR("Sign-in cancelled."));
 }
 
+// If the OS kills the app while the user authorizes in the browser (common on phones), the sign-in resumes
+// when the editor starts again instead of starting over.
+void GitHubSync::_save_pending_login(const String &p_user_code, const String &p_uri) {
+	Dictionary d;
+	d["client_id"] = login_client_id;
+	d["device_code"] = login_device_code;
+	d["user_code"] = p_user_code;
+	d["uri"] = p_uri;
+	d["interval"] = login_interval;
+	d["expires_at"] = login_expires_at;
+	Ref<FileAccess> f = FileAccess::open(_pending_login_path(), FileAccess::WRITE);
+	if (f.is_valid()) {
+		f->store_string(JSON::stringify(d));
+		f.unref();
+		FileAccess::set_unix_permissions(_pending_login_path(), BitField<FileAccess::UnixPermissionFlags>((int)FileAccess::UNIX_READ_OWNER | (int)FileAccess::UNIX_WRITE_OWNER));
+	}
+}
+
+void GitHubSync::_resume_pending_login() {
+	if (login_active || !FileAccess::exists(_pending_login_path())) {
+		return;
+	}
+	const Variant parsed = JSON::parse_string(FileAccess::get_file_as_string(_pending_login_path()));
+	if (parsed.get_type() != Variant::DICTIONARY) {
+		DirAccess::remove_absolute(_pending_login_path());
+		return;
+	}
+	const Dictionary d = parsed;
+	const double expires_at = d.get("expires_at", 0.0);
+	if (expires_at < OS::get_singleton()->get_unix_time() + 5.0 || String(d.get("device_code", "")).is_empty()) {
+		DirAccess::remove_absolute(_pending_login_path());
+		return;
+	}
+	login_active = true;
+	login_cb = nullptr;
+	login_client_id = d.get("client_id", "");
+	login_device_code = d.get("device_code", "");
+	login_interval = MAX(1.0, (double)d.get("interval", 5));
+	login_expires_at = expires_at;
+	_log(TTR("Resuming the GitHub sign-in that was in progress."), LOG_INFO);
+	emit_signal("device_code", String(d.get("user_code", "")), String(d.get("uri", "")));
+	login_timer->start(1.0);
+}
+
 void GitHubSync::_login_finish(const String &p_error) {
 	login_active = false;
 	login_timer->stop();
+	DirAccess::remove_absolute(_pending_login_path());
+	emit_signal("login_finished", p_error);
 	const ErrorCallback cb = login_cb;
 	login_cb = nullptr;
 	if (cb) {
@@ -694,10 +800,13 @@ void GitHubSync::_login_poll() {
 			return;
 		}
 
-		save_token(token);
+		const bool stored = save_token(token);
 		client->set_token(token);
 		_login_finish(String());
 		_log(TTR("Signed in with GitHub."), LOG_INFO);
+		if (!stored) {
+			_log(vformat(TTR("Warning: this device would not store your session (%s). You will have to sign in again next time."), get_token_path()), LOG_ERROR);
+		}
 		if (has_saved_config() && !connected) {
 			_verify_and_resume(token);
 		} else {
@@ -706,8 +815,23 @@ void GitHubSync::_login_poll() {
 	});
 }
 
-// GitHub answered 401 to an authenticated request: the saved session expired or was revoked.
-// The repository link and the sync state are kept, so signing in again resumes where it stopped.
+// GitHub answered 401 to an authenticated request. One stray answer must not log the user out, so the
+// session is checked once more before giving up.
+void GitHubSync::_on_unauthorized() {
+	if (!connected || verifying_session) {
+		return;
+	}
+	verifying_session = true;
+	client->get_user([this](const Dictionary &p_me) {
+		verifying_session = false;
+		if (!_res_ok(p_me) && _res_code(p_me) == 401) {
+			_session_expired();
+		}
+	});
+}
+
+// The saved session was confirmed invalid (expired or revoked). The repository link and the sync state are
+// kept, so signing in again resumes where it stopped.
 void GitHubSync::_session_expired() {
 	if (!connected) {
 		return;
@@ -719,8 +843,8 @@ void GitHubSync::_session_expired() {
 	busy = false;
 	again = false;
 	branch_ready = false;
-	DirAccess::remove_absolute(get_token_path());
 	account_login = String();
+	_save_cached_login(String());
 	_log(TTR("GitHub rejected the saved session (it expired or was revoked). The repository link is kept: sign in again to continue."), LOG_WARN);
 	_emit_status(TTR("GitHub session expired: sign in again"), STATUS_ERROR);
 	emit_signal("account_changed", String());
@@ -736,6 +860,7 @@ void GitHubSync::sign_out() {
 	busy = false;
 	branch_ready = false;
 	DirAccess::remove_absolute(get_token_path());
+	_save_cached_login(String());
 	client->set_token(String());
 	account_login = String();
 	_log(TTR("Signed out of GitHub."), LOG_INFO);
@@ -752,13 +877,21 @@ void GitHubSync::refresh_account() {
 		return;
 	}
 	client->set_token(token);
+	if (account_login.is_empty()) {
+		account_login = _load_cached_login();
+		if (!account_login.is_empty()) {
+			emit_signal("account_changed", account_login);
+		}
+	}
 	client->get_user([this](const Dictionary &p_me) {
 		if (_res_ok(p_me)) {
 			account_login = _res_data(p_me).get("login", "");
+			_save_cached_login(account_login);
 		} else if (_res_code(p_me) == 401) {
 			account_login = String();
+			_save_cached_login(String());
 		} else {
-			return; // Offline: leave the UI as it is.
+			return; // Temporary problem: keep showing the last known account.
 		}
 		emit_signal("account_changed", account_login);
 	});

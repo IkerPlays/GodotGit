@@ -132,6 +132,7 @@ private:
 
 	// Account sign-in (OAuth device flow).
 	bool login_active = false;
+	bool verifying_session = false;
 	String login_client_id;
 	String login_device_code;
 	double login_interval = 5.0;
@@ -174,7 +175,10 @@ private:
 	void _after_delay(double p_seconds, const std::function<void()> &p_action);
 	void _run_delayed();
 
+	void _on_unauthorized();
 	void _session_expired();
+	void _save_pending_login(const String &p_user_code, const String &p_uri);
+	void _resume_pending_login();
 
 	// Sign-in.
 	void _login_poll();
@@ -233,7 +237,7 @@ public:
 	static String get_token_path();
 	static String get_client_id();
 	static String load_token();
-	static void save_token(const String &p_token);
+	static bool save_token(const String &p_token);
 	static Vector<String> parse_repo(const String &p_text); // [owner, repo] or empty.
 	static String sanitize_repo_name(const String &p_name);
 

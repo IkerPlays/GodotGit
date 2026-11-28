@@ -98,6 +98,7 @@ class GitHubSyncDock : public VBoxContainer {
 
 	void _on_device_code(const String &p_code, const String &p_uri);
 	void _on_account_changed(const String &p_login);
+	void _on_login_finished(const String &p_error);
 
 	void _connect_pressed();
 	void _create_pressed();
